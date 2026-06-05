@@ -5,6 +5,23 @@ Small MCP server for Hermes Agent that:
 - stores Google OAuth tokens in `google_token.json`,
 - provides tools to check token status, schedule Google Meet events, and send emails.
 
+## WhatsApp + Hermes Gateway (Start Here)
+
+1. Configure WhatsApp in Hermes:
+```bash
+hermes whatsapp setup
+```
+
+2. Verify WhatsApp channel is connected:
+```bash
+hermes gateway list
+```
+
+3. Start Hermes gateway:
+```bash
+hermes gateway run
+```
+
 ## Setup
 
 1. Install dependencies:
@@ -40,6 +57,26 @@ hermes mcp add my-enterprise-server \
 ```
 
 Then restart Hermes/gateway so new tools are loaded.
+
+## Add MCP Server To Claude Desktop
+
+1. Open Claude Desktop MCP config file:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+2. Add this server entry:
+```json
+{
+  "mcpServers": {
+    "hermes-oauth": {
+      "command": "/path/to/python/interpreter",
+      "args": ["/path/to/hermes_oauth_server.py"]
+    }
+  }
+}
+```
+
+3. Restart Claude Desktop.
 
 ## Main MCP Tools
 
