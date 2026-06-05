@@ -149,6 +149,18 @@ def has_access_token() -> dict:
     is_expired = False
     if expiry:
         is_expired = datetime.fromisoformat(expiry.replace("Z", "+00:00")) <= datetime.now(timezone.utc)
+    if is_expired and data.get("refresh_token"):
+        try:
+            creds = Credentials.from_authorized_user_info(data, data.get("scopes", []))
+            creds.refresh(Request())
+            TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
+            data = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
+            expiry = data.get("expiry")
+            is_expired = False
+            if expiry:
+                is_expired = datetime.fromisoformat(expiry.replace("Z", "+00:00")) <= datetime.now(timezone.utc)
+        except Exception:
+            pass
     return {"ok": True, "has_token": bool(data.get("token")), "expiry": expiry, "is_expired": is_expired}
 
 
@@ -193,6 +205,26 @@ def send_email(to_emails: list[str], subject: str, body: str) -> dict:
         userId="me", body={"raw": raw}
     ).execute()
     return {"ok": True, "message_id": sent.get("id")}
+
+
+@mcp.tool()
+def read_emails(query: str = "", max_results: int = 10) -> dict:
+    gmail = build("gmail", "v1", credentials=_get_creds()).users().messages()
+    listed = gmail.list(userId="me", q=query, maxResults=max(1, min(max_results, 50))).execute()
+    items = []
+    for m in listed.get("messages", []):
+        full = gmail.get(userId="me", id=m["id"], format="metadata", metadataHeaders=["From", "Subject"]).execute()
+        headers = {h["name"]: h["value"] for h in full.get("payload", {}).get("headers", [])}
+        items.append({"id": m["id"], "from": headers.get("From", ""), "subject": headers.get("Subject", ""), "snippet": full.get("snippet", "")})
+    return {"ok": True, "emails": items}
+
+
+@mcp.tool()
+def archive_email(message_id: str) -> dict:
+    build("gmail", "v1", credentials=_get_creds()).users().messages().modify(
+        userId="me", id=message_id, body={"removeLabelIds": ["INBOX"]}
+    ).execute()
+    return {"ok": True, "archived": True, "message_id": message_id}
 
 
 if __name__ == "__main__":
