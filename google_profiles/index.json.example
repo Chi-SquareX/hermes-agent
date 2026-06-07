@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "default": {
+      "email": "you@example.com",
+      "name": "Your Name",
+      "expiry": "2026-01-01T12:00:00",
+      "has_refresh_token": true,
+      "connected_at": "2026-01-01T00:00:00+00:00"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+services:
+  hermes-dashboard:
+    build: .
+    container_name: hermes-dashboard
+    ports:
+      - "${HERMES_PORT:-8010}:${HERMES_PORT:-8010}"
+    env_file:
+      - .env
+    volumes:
+      - ./google_profiles:/app/google_profiles
+      - ./expense_data:/app/expense_data
+    environment:
+      OAUTHLIB_INSECURE_TRANSPORT: "1"
+      OAUTHLIB_RELAX_TOKEN_SCOPE: "1"
+    restart: unless-stopped

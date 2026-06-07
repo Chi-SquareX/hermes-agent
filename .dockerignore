@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.git/
+.env
+google_profiles/
+expense_data/
+.oauth_state.json
+google_token.json
+google_token.json.migrated
+*.md

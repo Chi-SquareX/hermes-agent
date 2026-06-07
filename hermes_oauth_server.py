@@ -4,14 +4,14 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import base64
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from pathlib import Path
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
+from dotenv import load_dotenv
 from googleapiclient.discovery import build
 
 try:
@@ -19,27 +19,74 @@ try:
 except ImportError:
     from fastmcp import FastMCP
 
+from profiles import get_creds, list_profiles, profile_token_status, sanitize_profile_id
+
 mcp = FastMCP("hermes-oauth")
 
+APP_FILE = Path(__file__).with_name("app.py")
+load_dotenv(APP_FILE.with_name(".env"), override=True)
+
 APP_HOST = "127.0.0.1"
-APP_PORT = 8000
+APP_PORT = int(os.getenv("HERMES_PORT", "8010"))
 APP_URL = f"http://{APP_HOST}:{APP_PORT}"
 APP_LOGIN_URL = f"{APP_URL}/login"
-APP_FILE = Path(__file__).with_name("app.py")
-TOKEN_FILE = Path(__file__).with_name("google_token.json")
 
 _app_process: subprocess.Popen | None = None
 
 
-def _is_app_up() -> bool:
+def _probe_app() -> tuple[bool, str | None]:
     try:
-        with urllib.request.urlopen(APP_LOGIN_URL, timeout=1.5) as response:
-            return response.status == 200
-    except (urllib.error.URLError, TimeoutError):
-        return False
+        with urllib.request.urlopen(f"{APP_URL}/api/profiles", timeout=1.5) as response:
+            return response.status == 200, None
+    except urllib.error.HTTPError as exc:
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        return False, f"/api/profiles returned HTTP {exc.code}: {body[:500]}"
+    except (urllib.error.URLError, TimeoutError) as exc:
+        return False, f"App is not reachable: {exc}"
+
+
+def _is_app_up() -> bool:
+    ok, _ = _probe_app()
+    return ok
 
 
 def _kill_any_app_on_port() -> None:
+    if sys.platform == "win32":
+        try:
+            out = subprocess.check_output(
+                ["netstat", "-ano"], text=True, stderr=subprocess.DEVNULL
+            )
+        except Exception:
+            return
+        pids: set[int] = set()
+        for line in out.splitlines():
+            if f":{APP_PORT}" in line and "LISTENING" in line:
+                parts = line.split()
+                if parts:
+                    try:
+                        pids.add(int(parts[-1]))
+                    except ValueError:
+                        pass
+        for pid in pids:
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        for _ in range(10):
+            still = [
+                line
+                for line in subprocess.check_output(["netstat", "-ano"], text=True).splitlines()
+                if f":{APP_PORT}" in line and "LISTENING" in line
+            ]
+            if not still:
+                break
+            time.sleep(0.3)
+        return
+
     try:
         out = subprocess.check_output(["lsof", "-ti", f"tcp:{APP_PORT}"], text=True).strip()
     except Exception:
@@ -63,6 +110,7 @@ def _start_fastapi_subprocess(auto_kill_after_seconds: float) -> subprocess.Pope
             APP_HOST,
             "--port",
             str(APP_PORT),
+            "--reload",
         ],
         cwd=str(APP_FILE.parent),
         start_new_session=True,
@@ -73,23 +121,30 @@ def _start_fastapi_subprocess(auto_kill_after_seconds: float) -> subprocess.Pope
             "PYTHONUNBUFFERED": "1",
             "AUTO_KILL_AFTER_SECONDS": str(auto_kill_after_seconds),
             "OAUTHLIB_INSECURE_TRANSPORT": "1",
+            "NO_PROXY": "127.0.0.1,localhost",
+            "no_proxy": "127.0.0.1,localhost",
         },
     )
 
 
-def _get_creds() -> Credentials:
-    if not TOKEN_FILE.exists():
-        raise ValueError("google_token.json not found. Run OAuth first.")
-    data = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
-    creds = Credentials.from_authorized_user_info(data, data.get("scopes", []))
-    if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
-    return creds
+def _is_expired(expiry: str | None) -> bool:
+    if not expiry:
+        return False
+    expiry_time = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+    if expiry_time.tzinfo is None:
+        expiry_time = expiry_time.replace(tzinfo=timezone.utc)
+    return expiry_time <= datetime.now(timezone.utc)
+
+
+@mcp.tool()
+def list_email_profiles() -> dict:
+    profiles = list_profiles(refresh_expired=True)
+    return {"ok": True, "count": len(profiles), "profiles": profiles}
 
 
 @mcp.tool()
 def start_google_oauth_and_get_login_url(
+    profile_id: str = "",
     startup_timeout_seconds: float = 12.0,
     auto_kill_after_seconds: float = 900.0,
     force_restart: bool = True,
@@ -98,6 +153,11 @@ def start_google_oauth_and_get_login_url(
 
     if startup_timeout_seconds <= 0 or auto_kill_after_seconds <= 0:
         return {"ok": False, "error": "Timeout values must be > 0"}
+
+    try:
+        resolved_profile_id = sanitize_profile_id(profile_id) if profile_id.strip() else ""
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
 
     if _app_process is not None and _app_process.poll() is not None:
         _app_process = None
@@ -109,6 +169,7 @@ def start_google_oauth_and_get_login_url(
     if not _is_app_up():
         _app_process = _start_fastapi_subprocess(auto_kill_after_seconds)
         deadline = time.time() + startup_timeout_seconds
+        last_error = None
 
         while time.time() < deadline:
             if _app_process.poll() is not None:
@@ -117,23 +178,27 @@ def start_google_oauth_and_get_login_url(
                     "error": "FastAPI app exited before startup.",
                     "returncode": _app_process.returncode,
                 }
-            if _is_app_up():
+            is_up, last_error = _probe_app()
+            if is_up:
                 break
             time.sleep(0.25)
         else:
             _app_process.terminate()
             _app_process = None
-            return {"ok": False, "error": "FastAPI app did not start in time."}
+            return {"ok": False, "error": "FastAPI app did not start in time.", "last_error": last_error}
 
+    login_url = f"{APP_LOGIN_URL}?{urllib.parse.urlencode({'profile_id': resolved_profile_id})}"
     try:
-        with urllib.request.urlopen(APP_LOGIN_URL, timeout=6) as response:
+        with urllib.request.urlopen(login_url, timeout=6) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception as exc:
         return {"ok": False, "error": f"Failed to fetch /login: {exc}"}
 
     return {
         "ok": True,
+        "profile_id": resolved_profile_id,
         "login_url": payload.get("login_url"),
+        "dashboard_url": APP_URL,
         "app_pid": _app_process.pid if _app_process is not None else None,
         "app_base_url": APP_URL,
         "auto_kill_after_seconds": auto_kill_after_seconds,
@@ -141,27 +206,36 @@ def start_google_oauth_and_get_login_url(
 
 
 @mcp.tool()
-def has_access_token() -> dict:
-    if not TOKEN_FILE.exists():
-        return {"ok": True, "has_token": False}
-    data = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
-    expiry = data.get("expiry")
-    is_expired = False
-    if expiry:
-        is_expired = datetime.fromisoformat(expiry.replace("Z", "+00:00")) <= datetime.now(timezone.utc)
-    if is_expired and data.get("refresh_token"):
+def has_access_token(profile_id: str = "", email: str = "") -> dict:
+    profiles = list_profiles()
+    if not profiles:
+        return {"ok": True, "has_token": False, "profiles": []}
+
+    if profile_id or email:
         try:
-            creds = Credentials.from_authorized_user_info(data, data.get("scopes", []))
-            creds.refresh(Request())
-            TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
-            data = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
-            expiry = data.get("expiry")
-            is_expired = False
-            if expiry:
-                is_expired = datetime.fromisoformat(expiry.replace("Z", "+00:00")) <= datetime.now(timezone.utc)
-        except Exception:
-            pass
-    return {"ok": True, "has_token": bool(data.get("token")), "expiry": expiry, "is_expired": is_expired}
+            status = profile_token_status(
+                profile_id=profile_id or None,
+                email=email or None,
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {
+            "ok": True,
+            "has_token": status["has_token"],
+            "profile_id": status["profile_id"],
+            "email": status["email"],
+            "expiry": status["expiry"],
+            "is_expired": status["is_expired"],
+        }
+
+    active = [p for p in profiles if p["has_token"] and not p["is_expired"]]
+    return {
+        "ok": True,
+        "has_token": bool(active),
+        "profile_count": len(profiles),
+        "active_profile_count": len(active),
+        "profiles": profiles,
+    }
 
 
 @mcp.tool()
@@ -172,6 +246,8 @@ def schedule_meet(
     guest_emails: list[str],
     description: str = "",
     timezone_name: str = "Asia/Kolkata",
+    profile_id: str = "",
+    email: str = "",
 ) -> dict:
     event = {
         "summary": summary,
@@ -186,7 +262,7 @@ def schedule_meet(
             }
         },
     }
-    created = build("calendar", "v3", credentials=_get_creds()).events().insert(
+    created = build("calendar", "v3", credentials=get_creds(profile_id=profile_id or None, email=email or None)).events().insert(
         calendarId="primary", body=event, sendUpdates="all", conferenceDataVersion=1
     ).execute()
     meet_link = (
@@ -196,20 +272,31 @@ def schedule_meet(
 
 
 @mcp.tool()
-def send_email(to_emails: list[str], subject: str, body: str) -> dict:
+def send_email(
+    to_emails: list[str],
+    subject: str,
+    body: str,
+    profile_id: str = "",
+    email: str = "",
+) -> dict:
     msg = MIMEText(body, "plain", "utf-8")
     msg["to"] = ", ".join(to_emails)
     msg["subject"] = subject
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    sent = build("gmail", "v1", credentials=_get_creds()).users().messages().send(
+    sent = build("gmail", "v1", credentials=get_creds(profile_id=profile_id or None, email=email or None)).users().messages().send(
         userId="me", body={"raw": raw}
     ).execute()
     return {"ok": True, "message_id": sent.get("id")}
 
 
 @mcp.tool()
-def read_emails(query: str = "", max_results: int = 10) -> dict:
-    gmail = build("gmail", "v1", credentials=_get_creds()).users().messages()
+def read_emails(
+    query: str = "",
+    max_results: int = 10,
+    profile_id: str = "",
+    email: str = "",
+) -> dict:
+    gmail = build("gmail", "v1", credentials=get_creds(profile_id=profile_id or None, email=email or None)).users().messages()
     listed = gmail.list(userId="me", q=query, maxResults=max(1, min(max_results, 50))).execute()
     items = []
     for m in listed.get("messages", []):
@@ -220,8 +307,8 @@ def read_emails(query: str = "", max_results: int = 10) -> dict:
 
 
 @mcp.tool()
-def archive_email(message_id: str) -> dict:
-    build("gmail", "v1", credentials=_get_creds()).users().messages().modify(
+def archive_email(message_id: str, profile_id: str = "", email: str = "") -> dict:
+    build("gmail", "v1", credentials=get_creds(profile_id=profile_id or None, email=email or None)).users().messages().modify(
         userId="me", id=message_id, body={"removeLabelIds": ["INBOX"]}
     ).execute()
     return {"ok": True, "archived": True, "message_id": message_id}

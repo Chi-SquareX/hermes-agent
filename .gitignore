@@ -8,8 +8,14 @@ venv/
 
 # Local secrets/tokens
 .env
+.env.local
+credentials.json
 google_token.json
+google_token.json.migrated
+google_profiles/*
+!google_profiles/*.example
 .oauth_state.json
+expense_data/
 
 # macOS
 .DS_Store

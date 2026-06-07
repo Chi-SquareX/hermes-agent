@@ -1,0 +1,17 @@
+{
+  "token": "ya29.example-access-token",
+  "refresh_token": "1//example-refresh-token",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "client_id": "your_client_id.apps.googleusercontent.com",
+  "client_secret": "your_client_secret",
+  "scopes": [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.settings.basic"
+  ],
+  "expiry": "2026-01-01T12:00:00"
+}
