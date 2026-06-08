@@ -13,6 +13,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
+from linkedin import (
+    get_last_thread_messages,
+    linkedin_state_status,
+    login_and_save_linkedin_session,
+    send_message_to_thread,
+    scrape_linkedin_inbox,
+)
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -312,6 +319,73 @@ def archive_email(message_id: str, profile_id: str = "", email: str = "") -> dic
         userId="me", id=message_id, body={"removeLabelIds": ["INBOX"]}
     ).execute()
     return {"ok": True, "archived": True, "message_id": message_id}
+
+
+@mcp.tool()
+async def linkedin_login_and_save_session(
+    state_file: str = "linkedin_state.json",
+    headless: bool = False,
+    timeout_seconds: int = 300,
+) -> dict:
+    saved = await login_and_save_linkedin_session(
+        state_file=state_file, headless=headless, timeout_seconds=timeout_seconds
+    )
+    return {"ok": True, "state_file": saved}
+
+
+@mcp.tool()
+async def linkedin_list_inbox_threads(
+    state_file: str = "linkedin_state.json",
+    max_threads: int = 20,
+    headless: bool = True,
+) -> dict:
+    items = await scrape_linkedin_inbox(
+        state_file=state_file, max_threads=max_threads, headless=headless
+    )
+    return {"ok": True, "threads": items, "thread_urls": [x.get("thread_url") for x in items]}
+
+
+@mcp.tool()
+async def linkedin_get_last_thread_messages(
+    thread_url: str,
+    state_file: str = "linkedin_state.json",
+    limit: int = 10,
+    headless: bool = True,
+) -> dict:
+    messages = await get_last_thread_messages(
+        thread_url=thread_url, state_file=state_file, limit=limit, headless=headless
+    )
+    return {"ok": True, "messages": messages}
+
+
+@mcp.tool()
+async def linkedin_send_message(
+    thread_url: str,
+    message: str,
+    state_file: str = "linkedin_state.json",
+    headless: bool = False,
+    post_send_delay_seconds: int = 8,
+) -> dict:
+    sent = await send_message_to_thread(
+        thread_url=thread_url,
+        message=message,
+        state_file=state_file,
+        headless=headless,
+        post_send_delay_seconds=post_send_delay_seconds,
+    )
+    return {"ok": True, "sent": sent}
+
+
+@mcp.tool()
+async def linkedin_session_state_status(
+    state_file: str = "linkedin_state.json",
+    headless: bool = True,
+    timeout_seconds: int = 20,
+) -> dict:
+    status = await linkedin_state_status(
+        state_file=state_file, headless=headless, timeout_seconds=timeout_seconds
+    )
+    return {"ok": True, **status}
 
 
 if __name__ == "__main__":
