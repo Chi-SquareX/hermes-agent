@@ -14,7 +14,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
 from linkedin import (
+    comment_on_linkedin_post,
     get_last_thread_messages,
+    get_recent_posts_from_profile,
+    like_linkedin_post,
     linkedin_state_status,
     login_and_save_linkedin_session,
     send_message_to_thread,
@@ -374,6 +377,52 @@ async def linkedin_send_message(
         post_send_delay_seconds=post_send_delay_seconds,
     )
     return {"ok": True, "sent": sent}
+
+
+@mcp.tool()
+async def linkedin_get_recent_posts(
+    profile_url: str,
+    max_posts: int = 5,
+    state_file: str = "linkedin_state.json",
+    headless: bool = True,
+) -> dict:
+    posts = await get_recent_posts_from_profile(
+        profile_url=profile_url,
+        state_file=state_file,
+        max_posts=max_posts,
+        headless=headless,
+    )
+    return {"ok": True, "profile_url": profile_url, "count": len(posts), "posts": posts}
+
+
+@mcp.tool()
+async def linkedin_like_post(
+    post_url: str,
+    state_file: str = "linkedin_state.json",
+    headless: bool = False,
+) -> dict:
+    result = await like_linkedin_post(
+        post_url=post_url,
+        state_file=state_file,
+        headless=headless,
+    )
+    return {"ok": bool(result.get("ok")), **result}
+
+
+@mcp.tool()
+async def linkedin_comment_on_post(
+    post_url: str,
+    comment: str,
+    state_file: str = "linkedin_state.json",
+    headless: bool = False,
+) -> dict:
+    result = await comment_on_linkedin_post(
+        post_url=post_url,
+        comment=comment,
+        state_file=state_file,
+        headless=headless,
+    )
+    return {"ok": bool(result.get("ok")), **result, "comment": comment}
 
 
 @mcp.tool()

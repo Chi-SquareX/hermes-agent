@@ -10,6 +10,7 @@ venv/
 .env
 .env.local
 credentials.json
+linkedin_state.json
 google_token.json
 google_token.json.migrated
 google_profiles/*

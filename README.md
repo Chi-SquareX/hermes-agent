@@ -156,6 +156,9 @@ Each profile uses a `profile_id` (for example `work`, `sales-team-1`). The first
 - `has_access_token` (all profiles, or one via `profile_id` / `email`)
 - `schedule_meet` (creates Calendar event + Google Meet link)
 - `send_email`, `read_emails`, `archive_email` (optional `profile_id` / `email`)
+- `linkedin_get_recent_posts` (get recent posts from a LinkedIn profile URL)
+- `linkedin_like_post` (like a specific post URL)
+- `linkedin_comment_on_post` (comment on a specific post URL)
 
 If you have multiple profiles connected, pass `profile_id` or `email` to Gmail/Calendar tools so the agent uses the right account.
 
