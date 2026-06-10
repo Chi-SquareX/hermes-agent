@@ -20,6 +20,8 @@ from linkedin import (
     like_linkedin_post,
     linkedin_state_status,
     login_and_save_linkedin_session,
+    search_linkedin_companies,
+    search_linkedin_people,
     send_message_to_thread,
     scrape_linkedin_inbox,
 )
@@ -393,6 +395,64 @@ async def linkedin_get_recent_posts(
         headless=headless,
     )
     return {"ok": True, "profile_url": profile_url, "count": len(posts), "posts": posts}
+
+
+@mcp.tool()
+async def linkedin_search_people(
+    query: str,
+    company: str = "",
+    location: str = "",
+    title: str = "",
+    max_results: int = 10,
+    state_file: str = "linkedin_state.json",
+    headless: bool = True,
+) -> dict:
+    people = await search_linkedin_people(
+        query=query,
+        company=company,
+        location=location,
+        title=title,
+        state_file=state_file,
+        max_results=max_results,
+        headless=headless,
+    )
+    search_terms = " ".join(
+        term.strip() for term in [query, title, company, location] if term and term.strip()
+    )
+    return {
+        "ok": True,
+        "query": search_terms,
+        "count": len(people),
+        "people": people,
+    }
+
+
+@mcp.tool()
+async def linkedin_search_companies(
+    query: str,
+    industry: str = "",
+    location: str = "",
+    max_results: int = 10,
+    state_file: str = "linkedin_state.json",
+    headless: bool = True,
+) -> dict:
+    companies = await search_linkedin_companies(
+        query=query,
+        industry=industry,
+        location=location,
+        state_file=state_file,
+        max_results=max_results,
+        headless=headless,
+    )
+    search_terms = " ".join(
+        term.strip() for term in [query, industry, location] if term and term.strip()
+    )
+    return {
+        "ok": True,
+        "query": search_terms,
+        "count": len(companies),
+        "companies": companies,
+    }
 
 
 @mcp.tool()
